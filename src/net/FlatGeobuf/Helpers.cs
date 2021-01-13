@@ -49,5 +49,10 @@ namespace FlatGeobuf {
         {
             return header.Crs?.Code ?? 0;
         }
+
+        public static void Write(this Stream stream, byte[] buffer)
+        {
+            stream.Write(buffer, 0, buffer.Length);
+        }
     }
 }
