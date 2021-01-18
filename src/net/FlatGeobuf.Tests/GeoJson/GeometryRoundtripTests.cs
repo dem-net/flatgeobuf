@@ -37,6 +37,13 @@ namespace FlatGeobuf.Tests.GeoJson
             var actual = GeoJsonConversions.Deserialize(GeoJsonConversions.Serialize(expected));
             AssertJson(expected, actual);
         }
+        [TestMethod]
+        public void PointZ()
+        {
+            var expected = MakeFeatureCollection("POINT(1.2 -2.1 10)", dimensions: 3);
+            var actual = GeoJsonConversions.Deserialize(GeoJsonConversions.Serialize(expected, dimensions: 3), dimensions: 3);
+            AssertJson(expected, actual);
+        }
 
         [TestMethod]
         public void Points()
@@ -101,12 +108,26 @@ namespace FlatGeobuf.Tests.GeoJson
             var actual = GeoJsonConversions.Deserialize(GeoJsonConversions.Serialize(expected));
             AssertJson(expected, actual);
         }
+        [TestMethod]
+        public void PolygonZ()
+        {
+            var expected = MakeFeatureCollection("POLYGON ((30 10 10, 40 40 20, 20 40 30, 10 20 40, 30 10 50))", dimensions: 3);
+            var actual = GeoJsonConversions.Deserialize(GeoJsonConversions.Serialize(expected, dimensions: 3), dimensions: 3);
+            AssertJson(expected, actual);
+        }
 
         [TestMethod]
         public void MultiPolygon()
         {
             var expected = MakeFeatureCollection("MULTIPOLYGON (((30 20, 45 40, 10 40, 30 20)), ((15 5, 40 10, 10 20, 5 10, 15 5)))");
             var actual = GeoJsonConversions.Deserialize(GeoJsonConversions.Serialize(expected));
+            AssertJson(expected, actual);
+        }
+        [TestMethod]
+        public void MultiPolygonZ()
+        {
+            var expected = MakeFeatureCollection("MULTIPOLYGON (((30 20 10, 45 40 20, 10 40 30, 30 20 40)), ((15 5 50, 40 10 60, 10 20 70, 5 10 80, 15 5 90)))", dimensions: 3);
+            var actual = GeoJsonConversions.Deserialize(GeoJsonConversions.Serialize(expected, dimensions: 3), dimensions: 3);
             AssertJson(expected, actual);
         }
 
