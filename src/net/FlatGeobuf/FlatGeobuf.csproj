@@ -7,11 +7,16 @@
   <ItemGroup>
     <PackageReference Include="NetTopologySuite" Version="2.1.0" />
     <PackageReference Include="NetTopologySuite.Features" Version="2.1.0" />
-    <PackageReference Include="NetTopologySuite.IO.GeoJSON" Version="2.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\..\flatbuffers\net\FlatBuffers\FlatBuffers.csproj" />
+    <ProjectReference Include="..\..\..\..\NetTopologySuite.IO.GeoJSON\src\NetTopologySuite.IO.GeoJSON\NetTopologySuite.IO.GeoJSON.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
+  <TargetFrameworks>netstandard2.0</TargetFrameworks>
+  <LangVersion>8.0</LangVersion>
   </PropertyGroup>
 
 </Project>

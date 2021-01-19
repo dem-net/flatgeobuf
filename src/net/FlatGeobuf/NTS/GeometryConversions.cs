@@ -225,5 +225,18 @@ namespace FlatGeobuf.NTS
                 _ => throw new ApplicationException("Unknown or null geometry"),
             };
         }
+        public static GeometryType ToGeometryType(OgcGeometryType geometryType)
+        {
+            return geometryType switch
+            {
+                OgcGeometryType.Point => GeometryType.Point,
+                OgcGeometryType.MultiPoint  => GeometryType.MultiPoint,
+                OgcGeometryType.LineString => GeometryType.LineString,
+                OgcGeometryType.MultiLineString=> GeometryType.MultiLineString,
+                OgcGeometryType.Polygon=> GeometryType.Polygon,
+                OgcGeometryType.MultiPolygon=> GeometryType.MultiPolygon,
+                _ => throw new ApplicationException("Unknown or null geometry"),
+            };
+        }
     }
 }

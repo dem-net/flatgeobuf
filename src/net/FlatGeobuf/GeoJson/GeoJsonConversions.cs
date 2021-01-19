@@ -18,7 +18,7 @@ namespace FlatGeobuf
 
         public static string Deserialize(byte[] bytes, byte dimensions = 2)
         {
-            var fc = FeatureCollectionConversions.Deserialize(bytes, dimensions);
+            var fc = FeatureCollectionConversions.Deserialize(bytes);
             var writer = new GeoJsonWriter();
             var geojson = writer.Write(fc, dimensions);
             return geojson;
