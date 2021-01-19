@@ -13,7 +13,9 @@ namespace FlatGeobuf.NTS
 {
     public class GeometryOffsets {
         public uint[] ends = null;
-        public VectorOffset coordsOffset = default;
+        public VectorOffset xyOffset = default;
+        public VectorOffset zOffset = default;
+        public VectorOffset mOffset = default;
         public VectorOffset endsOffset = default;
         public GeometryOffsets[] gos = null;
         public GeometryType Type { get; set; }
@@ -57,20 +59,24 @@ namespace FlatGeobuf.NTS
                 return go;
             }
 
-            double[] coordinates = null;
-            if (dimensions == 3)
-            {
-                coordinates = geometry.Coordinates
-                .SelectMany(c => new double[] { c.X, c.Y, c.Z })
-                .ToArray();
-            }
-            else
-            {
-                coordinates = geometry.Coordinates
+            var xy = geometry.Coordinates
                 .SelectMany(c => new double[] { c.X, c.Y })
                 .ToArray();
+            go.xyOffset = Geometry.CreateXyVector(builder, xy);
+
+            if (dimensions == 3) {
+                var z = geometry.Coordinates
+                    .SelectMany(c => new double[] { c.Z })
+                    .ToArray();
+                go.zOffset = Geometry.CreateXyVector(builder, z);
             }
-            go.coordsOffset = Geometry.CreateXyVector(builder, coordinates);
+
+            if (dimensions == 4) {
+                var m = geometry.Coordinates
+                    .SelectMany(c => new double[] { c.M })
+                    .ToArray();
+                go.mOffset = Geometry.CreateXyVector(builder, m);
+            }
 
             if (go.ends != null)
                 go.endsOffset = Geometry.CreateEndsVector(builder, go.ends);
@@ -132,7 +138,7 @@ namespace FlatGeobuf.NTS
             uint offset = 0;
             for (var i = 0; i < ends.Length; i++)
             {
-                var end = ends[i] << 1;
+                var end = ends[i] * dimensions;
                 var ringCoords = coords.Skip((int) offset).Take((int) end).ToArray();
                 var linearRing = factory.CreateLinearRing(sequenceFactory.Create(ringCoords, dimensions));
                 linearRings.Add(linearRing);
@@ -143,41 +149,8 @@ namespace FlatGeobuf.NTS
             return factory.CreatePolygon(shell, holes);
         }
 
-        static MultiPolygon ParseFlatbufMultiPolygon(uint[] lengths, uint[] ringLengths, uint[] ringCounts, double[] coords, byte dimensions)
+        public static NTSGeometry FromFlatbuf(Geometry geometry, GeometryType type, byte dimensions)
         {
-            var sequenceFactory = new PackedCoordinateSequenceFactory();
-            var factory = new GeometryFactory(sequenceFactory);
-            var polygons = new List<Polygon>();
-            if (lengths == null)
-            {
-                var polygon = ParseFlatbufPolygon(ringLengths, coords, dimensions);
-                polygons.Add(polygon);
-            }
-            else
-            {
-                var arraySegment = new ArraySegment<double>(coords);
-                uint offset = 0;
-                uint ringOffset = 0;
-                for (int i = 0; i < lengths.Length; i++)
-                {
-                    var length = lengths[i];
-                    var ringCount = ringCounts[i];
-                    uint[] ringLengthSubset = null;
-                    if (ringCount > 1)
-                        ringLengthSubset = new ArraySegment<uint>(ringLengths).Skip((int) ringOffset).Take((int) ringCount).ToArray();
-                    ringOffset += ringCount;
-
-                    var linearRingCoords = arraySegment.Skip((int) offset).Take((int) length).ToArray();
-                    var polygon = ParseFlatbufPolygon(ringLengthSubset, linearRingCoords, dimensions);
-                    polygons.Add(polygon);
-                    offset += length;
-                }
-            }
-
-            return factory.CreateMultiPolygon(polygons.ToArray());
-        }
-
-        public static NTSGeometry FromFlatbuf(Geometry geometry, GeometryType type, byte dimensions = 2) {
             var factory = new GeometryFactory();
 
             if (type == GeometryType.Unknown)
@@ -189,13 +162,32 @@ namespace FlatGeobuf.NTS
                     int partsLength = geometry.PartsLength;
                     Polygon[] polygons = new Polygon[partsLength];
                     for (int i = 0; i < geometry.PartsLength; i++)
-                        polygons[i] = (Polygon) FromFlatbuf(geometry.Parts(i).Value, GeometryType.Polygon);
+                        polygons[i] = (Polygon) FromFlatbuf(geometry.Parts(i).Value, GeometryType.Polygon, dimensions);
                     return factory.CreateMultiPolygon(polygons);
             }
 
-            var coords = geometry.GetXyArray();
+            var xy = geometry.GetXyArray();
             var ends = geometry.GetEndsArray();
             var sequenceFactory = new PackedCoordinateSequenceFactory();
+
+            double[] coords;
+            if (dimensions == 3)
+            {
+                var z = geometry.GetZArray();
+                coords = new double[z.Length * dimensions];
+                var ci = 0;
+                for (int i = 0; i < z.Length; i++)
+                {
+                    coords[ci++] = xy[i * 2];
+                    coords[ci++] = xy[(i * 2) + 1];
+                    coords[ci++] = z[i];
+                }
+            }
+            else
+            {
+                coords = xy;
+            }
+
 
             return type switch
             {
@@ -204,8 +196,6 @@ namespace FlatGeobuf.NTS
                 GeometryType.LineString => factory.CreateLineString(sequenceFactory.Create(coords, dimensions)),
                 GeometryType.MultiLineString => ParseFlatbufMultiLineString(ends, coords, dimensions),
                 GeometryType.Polygon => ParseFlatbufPolygon(ends, coords, dimensions),
-                //case GeometryType.MultiPolygon:
-                //    return ParseFlatbufMultiPolygon(ends, coords, dimensions);
                 _ => throw new ApplicationException("FromFlatbuf: Unsupported geometry type"),
             };
         }
