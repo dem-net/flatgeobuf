@@ -239,6 +239,7 @@ namespace FlatGeobuf.NTS
                 OgcGeometryType.MultiLineString=> GeometryType.MultiLineString,
                 OgcGeometryType.Polygon=> GeometryType.Polygon,
                 OgcGeometryType.MultiPolygon=> GeometryType.MultiPolygon,
+                OgcGeometryType.GeometryCollection => GeometryType.Unknown,
                 _ => throw new ApplicationException("Unknown or null geometry"),
             };
         }
