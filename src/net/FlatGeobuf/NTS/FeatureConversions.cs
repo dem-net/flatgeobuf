@@ -127,39 +127,29 @@ namespace FlatGeobuf.NTS
                             attributesTable.Add(name, MemoryMarshal.Read<bool>(bytes.Slice(pos, 1)));
                             pos += 1;
                             break;
-                        case ColumnType.UByte:
-                            attributesTable.Add(name, reader.ReadByte());
-                            break;
-                        case ColumnType.Byte:
-                            attributesTable.Add(name, reader.ReadSByte());
-                            break;
                         case ColumnType.Short:
                             attributesTable.Add(name, MemoryMarshal.Read<short>(bytes.Slice(pos, 2)));
                             pos += 1;
-                            break;
-                        case ColumnType.UShort:
-                            attributesTable.Add(name, reader.ReadUInt16());
                             break;
                         case ColumnType.Int:
                             attributesTable.Add(name, MemoryMarshal.Read<int>(bytes.Slice(pos, 4)));
                             pos += 4;
                             break;
-                        case ColumnType.UInt:
-                            attributesTable.Add(name, reader.ReadUInt32());
-                            break;
                         case ColumnType.Long:
                             attributesTable.Add(name, MemoryMarshal.Read<long>(bytes.Slice(pos, 8)));
                             pos += 8;
-                            break;
-                        case ColumnType.ULong:
-                            attributesTable.Add(name, reader.ReadUInt64());
                             break;
                         case ColumnType.Double:
                             attributesTable.Add(name, MemoryMarshal.Read<double>(bytes.Slice(pos, 8)));
                             pos += 8;
                             break;
                         case ColumnType.Float:
-                            attributesTable.Add(name, reader.ReadSingle());
+                            attributesTable.Add(name, MemoryMarshal.Read<float>(bytes.Slice(pos, 4)));
+                            pos += 4;
+                            break;
+                        case ColumnType.Byte:
+                            attributesTable.Add(name, MemoryMarshal.Read<byte>(bytes.Slice(pos, 1)));
+                            pos += 1;
                             break;
                         case ColumnType.DateTime:
                         case ColumnType.String:
