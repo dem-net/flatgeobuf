@@ -6,6 +6,7 @@ using FlatBuffers;
 using System.Text;
 using System.IO;
 using NTSGeometry = NetTopologySuite.Geometries.Geometry;
+using System.Runtime.InteropServices;
 
 namespace FlatGeobuf.NTS
 {
@@ -78,7 +79,7 @@ namespace FlatGeobuf.NTS
 
             var propertiesOffset = default(VectorOffset);
             if (memoryStream.Position > 0)
-                propertiesOffset = Feature.CreatePropertiesVector(builder, memoryStream.ToArray());
+                propertiesOffset = Feature.CreatePropertiesVectorBlock(builder, memoryStream.ToArray());
 
             Offset<Geometry> geometryOffset;
             if (go.gos != null && go.gos.Length > 0) {
@@ -104,26 +105,27 @@ namespace FlatGeobuf.NTS
             return builder.DataBuffer.ToSizedArray();
         }
 
-        public static IFeature FromByteBuffer(ByteBuffer bb, GeometryType geometryType, byte dimensions, IList<ColumnMeta> columns = null)
+        public static IFeature FromByteBuffer(ByteBuffer bb, ref Header header)
         {
             var feature = Feature.GetRootAsFeature(bb);
             IAttributesTable attributesTable = null;
-            var propertiesArray = feature.GetPropertiesArray();
-            if (propertiesArray != null && propertiesArray.Length > 0)
+            if (feature.PropertiesLength != 0)
             {
-                var memoryStream = new MemoryStream(propertiesArray);
-                var reader = new BinaryReader(memoryStream);
                 attributesTable = new AttributesTable();
-                while (memoryStream.Position < memoryStream.Length)
+                int pos = 0;
+                var bytes = feature.GetPropertiesBytes();
+                while (pos < feature.PropertiesLength)
                 {
-                    ushort i = reader.ReadUInt16();
-                    var column = columns[i];
+                    ushort i = MemoryMarshal.Read<ushort>(bytes.Slice(pos, 2));
+                    pos += 2;
+                    var column = header.Columns(i).Value;
                     var type = column.Type;
                     var name = column.Name;
                     switch (type)
                     {
                         case ColumnType.Bool:
-                            attributesTable.Add(name, reader.ReadBoolean());
+                            attributesTable.Add(name, MemoryMarshal.Read<bool>(bytes.Slice(pos, 1)));
+                            pos += 1;
                             break;
                         case ColumnType.UByte:
                             attributesTable.Add(name, reader.ReadByte());
@@ -132,35 +134,39 @@ namespace FlatGeobuf.NTS
                             attributesTable.Add(name, reader.ReadSByte());
                             break;
                         case ColumnType.Short:
-                            attributesTable.Add(name, reader.ReadInt16());
+                            attributesTable.Add(name, MemoryMarshal.Read<short>(bytes.Slice(pos, 2)));
+                            pos += 1;
                             break;
                         case ColumnType.UShort:
                             attributesTable.Add(name, reader.ReadUInt16());
                             break;
                         case ColumnType.Int:
-                            attributesTable.Add(name, reader.ReadInt32());
+                            attributesTable.Add(name, MemoryMarshal.Read<int>(bytes.Slice(pos, 4)));
+                            pos += 4;
                             break;
                         case ColumnType.UInt:
                             attributesTable.Add(name, reader.ReadUInt32());
                             break;
                         case ColumnType.Long:
-                            attributesTable.Add(name, reader.ReadInt64());
+                            attributesTable.Add(name, MemoryMarshal.Read<long>(bytes.Slice(pos, 8)));
+                            pos += 8;
                             break;
                         case ColumnType.ULong:
                             attributesTable.Add(name, reader.ReadUInt64());
                             break;
                         case ColumnType.Double:
-                            attributesTable.Add(name, reader.ReadDouble());
+                            attributesTable.Add(name, MemoryMarshal.Read<double>(bytes.Slice(pos, 8)));
+                            pos += 8;
                             break;
                         case ColumnType.Float:
                             attributesTable.Add(name, reader.ReadSingle());
                             break;
                         case ColumnType.DateTime:
                         case ColumnType.String:
-                            int len = reader.ReadInt32();
-                            var str = Encoding.UTF8.GetString(memoryStream.ToArray(), (int) memoryStream.Position, len);
-                            memoryStream.Position += len;
-                            attributesTable.Add(name, str);
+                            int len = MemoryMarshal.Read<int>(bytes.Slice(pos, 4));
+                            pos += 4;
+                            attributesTable.Add(name, Encoding.UTF8.GetString(bytes.Slice(pos, len)));
+                            pos += len;
                             break;
                         default: throw new Exception($"Unknown type {type}");
                     }
@@ -171,7 +177,10 @@ namespace FlatGeobuf.NTS
             try
             {
                 if (feature.Geometry.HasValue)
-                geometry = GeometryConversions.FromFlatbuf(feature.Geometry.Value, geometryType, dimensions);
+                {
+                    var geometryCopy = feature.Geometry.Value;
+                    geometry = GeometryConversions.FromFlatbuf(ref geometryCopy, ref header);
+                }
             }
             catch (ArgumentException)
             {
