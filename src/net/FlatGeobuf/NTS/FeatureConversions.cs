@@ -37,7 +37,7 @@ namespace FlatGeobuf.NTS
                             writer.Write((bool) value);
                             break;
                         case ColumnType.Byte:
-                            writer.Write((sbyte) value);
+                            writer.Write(Convert.ToSByte(value));
                             break;
                         case ColumnType.UByte:
                             writer.Write((byte) value);
@@ -148,6 +148,10 @@ namespace FlatGeobuf.NTS
                             pos += 4;
                             break;
                         case ColumnType.Byte:
+                            attributesTable.Add(name, MemoryMarshal.Read<sbyte>(bytes.Slice(pos, 1)));
+                            pos += 1;
+                            break;
+                        case ColumnType.UByte:
                             attributesTable.Add(name, MemoryMarshal.Read<byte>(bytes.Slice(pos, 1)));
                             pos += 1;
                             break;
