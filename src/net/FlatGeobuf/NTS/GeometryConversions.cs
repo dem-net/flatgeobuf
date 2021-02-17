@@ -1,12 +1,7 @@
 using System;
 using System.Linq;
-using System.Collections.Generic;
-
 using NetTopologySuite.Geometries;
-using NetTopologySuite.Geometries.Implementation;
-
 using NTSGeometry = NetTopologySuite.Geometries.Geometry;
-
 using FlatBuffers;
 
 namespace FlatGeobuf.NTS
@@ -22,7 +17,22 @@ namespace FlatGeobuf.NTS
     }
 
     public static class GeometryConversions {
-        public static GeometryOffsets BuildGeometry(FlatBufferBuilder builder, NTSGeometry geometry, GeometryType geometryType, byte dimensions)
+
+        public static CoordinateSequence GetCoordinateSequence(NTSGeometry geometry)
+        {
+            return geometry switch
+            {
+                Point p => p.CoordinateSequence,
+                MultiPoint mp => (mp.Geometries[0] as Point).CoordinateSequence,
+                LineString ls => ls.CoordinateSequence,
+                MultiLineString mls => (mls.Geometries[0] as LineString).CoordinateSequence,
+                Polygon p => p.Shell.CoordinateSequence,
+                MultiPolygon mp => (mp.Geometries[0] as Polygon).Shell.CoordinateSequence,
+                _ => throw new ApplicationException("Unknown or null geometry"),
+            };
+        }
+
+        public static GeometryOffsets BuildGeometry(FlatBufferBuilder builder, NTSGeometry geometry, GeometryType geometryType, ref Header header)
         {
             var go = new GeometryOffsets
             {
@@ -32,50 +42,64 @@ namespace FlatGeobuf.NTS
             if (geometry == null)
                 return go;
 
-            if (geometryType == GeometryType.MultiLineString)
+            var seq = GetCoordinateSequence(geometry);
+
+            if (seq is FlatGeobufCoordinateSequence fbSeq)
             {
-                uint end = 0;
-                MultiLineString mls = (MultiLineString) geometry;
-                if (mls.NumGeometries > 1) {
-                    go.ends = new uint[mls.NumGeometries];
-                    for (int i = 0; i < mls.NumGeometries; i++)
-                        go.ends[i] = end += (uint) mls.Geometries[i].NumPoints;
+                go.xyOffset = Geometry.CreateXyVectorBlock(builder, fbSeq.XY);
+                if (header.HasZ)
+                    go.zOffset = Geometry.CreateXyVectorBlock(builder, fbSeq.Z);
+                if (header.HasM)
+                    go.mOffset = Geometry.CreateXyVectorBlock(builder, fbSeq.M);
+                if (fbSeq.Geometry.EndsLength > 0)
+                    go.ends = fbSeq.Geometry.GetEndsArray();
+            }
+            else
+            {
+                if (geometryType == GeometryType.MultiLineString)
+                {
+                    uint end = 0;
+                    MultiLineString mls = (MultiLineString) geometry;
+                    if (mls.NumGeometries > 1) {
+                        go.ends = new uint[mls.NumGeometries];
+                        for (int i = 0; i < mls.NumGeometries; i++)
+                            go.ends[i] = end += (uint) mls.Geometries[i].NumPoints;
+                    }
                 }
-            }
-            else if (geometryType == GeometryType.Polygon)
-            {
-                go.ends = CreateEnds(geometry as Polygon);
-            }
-            else if (geometryType == GeometryType.MultiPolygon)
-            {
-                MultiPolygon mp = (MultiPolygon) geometry;
-                int numGeometries = mp.NumGeometries;
-                GeometryOffsets[] gos = new GeometryOffsets[numGeometries];
-                for (int i = 0; i < numGeometries; i++) {
-                    Polygon p = (Polygon) mp.Geometries[i];
-                    gos[i] = BuildGeometry(builder, p, GeometryType.Polygon, dimensions);
+                else if (geometryType == GeometryType.Polygon)
+                {
+                    go.ends = CreateEnds(geometry as Polygon);
                 }
-                go.gos = gos;
-                return go;
-            }
+                else if (geometryType == GeometryType.MultiPolygon)
+                {
+                    MultiPolygon mp = (MultiPolygon) geometry;
+                    int numGeometries = mp.NumGeometries;
+                    GeometryOffsets[] gos = new GeometryOffsets[numGeometries];
+                    for (int i = 0; i < numGeometries; i++) {
+                        Polygon p = (Polygon) mp.Geometries[i];
+                        gos[i] = BuildGeometry(builder, p, GeometryType.Polygon, ref header);
+                    }
+                    go.gos = gos;
+                    return go;
+                }
 
-            var xy = geometry.Coordinates
-                .SelectMany(c => new double[] { c.X, c.Y })
-                .ToArray();
-            go.xyOffset = Geometry.CreateXyVectorBlock(builder, xy);
-
-            if (dimensions == 3) {
-                var z = geometry.Coordinates
-                    .SelectMany(c => new double[] { c.Z })
+                var xy = geometry.Coordinates
+                    .SelectMany(c => new double[] { c.X, c.Y })
                     .ToArray();
-                go.zOffset = Geometry.CreateXyVectorBlock(builder, z);
-            }
+                go.xyOffset = Geometry.CreateXyVectorBlock(builder, xy);
+                if (header.HasZ) {
+                    var z = geometry.Coordinates
+                        .SelectMany(c => new double[] { c.Z })
+                        .ToArray();
+                    go.zOffset = Geometry.CreateXyVectorBlock(builder, z);
+                }
 
-            if (dimensions == 4) {
-                var m = geometry.Coordinates
-                    .SelectMany(c => new double[] { c.M })
-                    .ToArray();
-                go.mOffset = Geometry.CreateXyVectorBlock(builder, m);
+                if (header.HasM) {
+                    var m = geometry.Coordinates
+                        .SelectMany(c => new double[] { c.M })
+                        .ToArray();
+                    go.mOffset = Geometry.CreateXyVectorBlock(builder, m);
+                }
             }
 
             if (go.ends != null)
@@ -93,50 +117,58 @@ namespace FlatGeobuf.NTS
             return ends;
         }
 
-        static MultiLineString ParseFlatbufMultiLineStringSinglePart(GeometryFactory factory, int count, int dimension, ref Geometry geometry)
+        static MultiPoint ParseFlatbufMultiPoint(GeometryFactory factory, ref Header header, ref Geometry geometry)
         {
-            var lineString = factory.CreateLineString(new FlatGeobufGeometryCoordinateSequence(count, dimension, ref geometry));
+            var xy = geometry.GetXyArray();
+            var z = header.HasZ ? geometry.GetZArray() : null;
+            var m = header.HasM ? geometry.GetMArray() : null;
+            var count = xy.Length / 2;
+            var points = new Point[count];
+            for (int i = 0; i < count; i++)
+            {
+                var pxy = new double[] { xy[i * 2], xy[i * 2 + 1] };
+                var pz = header.HasZ ? new double[] { z[i] } : null;
+                var pm = header.HasM ? new double[] { m[i] } : null;
+                points[i] = factory.CreatePoint(new FlatGeobufCoordinateSequence(pxy, pz, pm, 0));
+            }
+            return factory.CreateMultiPoint(points);
+        }
+
+        static MultiLineString ParseFlatbufMultiLineStringSinglePart(GeometryFactory factory, ref Header header, ref Geometry geometry)
+        {
+            var lineString = factory.CreateLineString(new FlatGeobufCoordinateSequence(ref header, ref geometry));
             return factory.CreateMultiLineString(new [] { lineString });
         }
 
-        static MultiLineString ParseFlatbufMultiLineString(GeometryFactory factory, int count, int dimension, ref Geometry geometry)
+        static MultiLineString ParseFlatbufMultiLineString(GeometryFactory factory, ref Header header, ref Geometry geometry)
         {
             if (geometry.EndsLength == 0)
-                return ParseFlatbufMultiLineStringSinglePart(factory, count, dimension, ref geometry);
-            int start = 0;
+                return ParseFlatbufMultiLineStringSinglePart(factory, ref header, ref geometry);
             var lineStrings = new LineString[geometry.EndsLength];
             for (var i = 0; i < geometry.EndsLength; i++)
-            {
-                var end = (int) geometry.Ends(i);
-                var lineString = factory.CreateLineString(new FlatGeobufGeometryCoordinateSequence(end - start, dimension, ref geometry, start));
-                lineStrings[i] = lineString;
-                start = end;
-            }
+                lineStrings[i] = factory.CreateLineString(new FlatGeobufCoordinateSequence(ref header, ref geometry, i));
             return factory.CreateMultiLineString(lineStrings);
         }
 
-        static Polygon ParseFlatbufPolygonSingleRing(GeometryFactory factory, int count, int dimension, ref Geometry geometry)
+        static Polygon ParseFlatbufPolygonSingleRing(GeometryFactory factory, ref Header header, ref Geometry geometry)
         {
-            var shell = factory.CreateLinearRing(new FlatGeobufGeometryCoordinateSequence(count, dimension, ref geometry));
+            var shell = factory.CreateLinearRing(new FlatGeobufCoordinateSequence(ref header, ref geometry));
             return factory.CreatePolygon(shell);
         }
 
-        static Polygon ParseFlatbufPolygon(GeometryFactory factory, int count, int dimension, ref Geometry geometry)
+        static Polygon ParseFlatbufPolygon(GeometryFactory factory, ref Header header, ref Geometry geometry)
         {
             if (geometry.EndsLength == 0)
-                return ParseFlatbufPolygonSingleRing(factory, count, dimension, ref geometry);
+                return ParseFlatbufPolygonSingleRing(factory, ref header, ref geometry);
             LinearRing shell = null;
             var holes = new LinearRing[geometry.EndsLength - 1];
-            int start = 0;
             for (var i = 0; i < geometry.EndsLength; i++)
             {
-                var end = (int) geometry.Ends(i);
-                var linearRing = factory.CreateLinearRing(new FlatGeobufGeometryCoordinateSequence(end - start, dimension, ref geometry, start));
+                var linearRing = factory.CreateLinearRing(new FlatGeobufCoordinateSequence(ref header, ref geometry, i));
                 if (i == 0)
                     shell = linearRing;
                 else
                     holes[i - 1] = linearRing;
-                start = end;
             }
             return factory.CreatePolygon(shell, holes);
         }
@@ -146,9 +178,67 @@ namespace FlatGeobuf.NTS
             return FromFlatbuf(ref geometry, header.GeometryType, ref header);
         }
 
+        public static CoordinateSequence ToCoordinateSequence(GeometryFactory factory, ref Geometry geometry, ref Header header)
+        {
+            var sequenceFactory = factory.CoordinateSequenceFactory;
+            if (sequenceFactory is FlatGeobufCoordinateSequenceFactory fbFactory)
+                return fbFactory.Create(ref header, ref geometry);
+
+            throw new Exception("Unexpected CoordinateSequenceFactory");
+
+            // NOTE: below was used to compare performance with alternative CoordinateSequence
+
+            /*int count = geometry.XyLength / 2;
+
+            if (sequenceFactory is RawCoordinateSequenceFactory)
+            {
+                var offsets = new (int sourceIndex, int offset)[]
+                {
+                    (0, 0),
+                    (0, 1)
+                };
+                int measures = 0;
+                var memory = new CastingMemoryManager<double>(geometry.GetXyMemory().ToArray()).Memory;
+                return new RawCoordinateSequence(new Memory<double>[] { memory }, offsets, measures);
+            }
+
+            var xy = geometry.GetXyArray();
+
+            if (sequenceFactory is DotSpatialAffineCoordinateSequenceFactory dpFactory)
+                return dpFactory.Create(xy);
+
+            var cs = new Coordinate[count];
+            if (!header.HasZ && !header.HasM)
+            {
+                for (int i = 0; i < count; i++)
+                    cs[i] = new Coordinate(xy[i * 2], xy[i * 2 + 1]);
+            }
+            else if (header.HasZ && !header.HasM)
+            {
+                var z = geometry.GetZArray();
+                for (int i = 0; i < count; i++)
+                    cs[i] = new CoordinateZ(xy[i * 2], xy[i * 2 + 1], z[i]);
+            }
+            else if (!header.HasZ && header.HasM)
+            {
+                var m = geometry.GetMArray();
+                for (int i = 0; i < count; i++)
+                    cs[i] = new CoordinateM(xy[i * 2], xy[i * 2 + 1], m[i]);
+            }
+            else if (header.HasZ && header.HasM)
+            {
+                var z = geometry.GetZArray();
+                var m = geometry.GetMArray();
+                for (int i = 0; i < count; i++)
+                    cs[i] = new CoordinateZM(xy[i * 2], xy[i * 2 + 1], z[i], m[i]);
+            }
+            return sequenceFactory.Create(cs);*/
+        }
+
         public static NTSGeometry FromFlatbuf(ref Geometry geometry, GeometryType type, ref Header header)
         {
-            var factory = new GeometryFactory();
+            var factory = new GeometryFactory(new FlatGeobufCoordinateSequenceFactory());
+            //var factory = NtsGeometryServices.Instance.CreateGeometryFactory();
 
             if (type == GeometryType.Unknown)
                 type = geometry.Type;
@@ -166,23 +256,13 @@ namespace FlatGeobuf.NTS
                     return factory.CreateMultiPolygon(polygons);
             }
 
-            int count = geometry.XyLength / 2;
-
-            int dimension;
-            if (header.HasZ)
-                dimension = 3;
-            else if (header.HasZ && header.HasM)
-                dimension = 4;
-            else
-                dimension = 2;
-
             return type switch
             {
-                GeometryType.Point => factory.CreatePoint(new FlatGeobufGeometryCoordinateSequence(count, dimension, ref geometry)),
-                GeometryType.MultiPoint => factory.CreateMultiPoint(new FlatGeobufGeometryCoordinateSequence(count, dimension, ref geometry)),
-                GeometryType.LineString => factory.CreateLineString(new FlatGeobufGeometryCoordinateSequence(count, dimension, ref geometry)),
-                GeometryType.MultiLineString => ParseFlatbufMultiLineString(factory, count, dimension, ref geometry),
-                GeometryType.Polygon => ParseFlatbufPolygon(factory, count, dimension, ref geometry),
+                GeometryType.Point => factory.CreatePoint(ToCoordinateSequence(factory, ref geometry, ref header)),
+                GeometryType.MultiPoint => ParseFlatbufMultiPoint(factory, ref header, ref geometry),
+                GeometryType.LineString => factory.CreateLineString(ToCoordinateSequence(factory, ref geometry, ref header)),
+                GeometryType.MultiLineString => ParseFlatbufMultiLineString(factory, ref header, ref geometry),
+                GeometryType.Polygon => ParseFlatbufPolygon(factory, ref header, ref geometry),
                 _ => throw new ApplicationException("FromFlatbuf: Unsupported geometry type"),
             };
         }
